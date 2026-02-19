@@ -486,47 +486,75 @@
         };
 
         // --- 新的腾讯云OCR识别函数 ---
-        window.processScan = async (input) => {
-            const file = input.files[0];
-            if (!file) return;
-            
-            const scanBtn = document.getElementById('scanBtn');
-            const scanLoading = document.getElementById('scanLoading');
-            const scanResult = document.getElementById('scanResult');
+// 替换原有的 processScan 函数
+window.processScan = async (input) => {
+    const file = input.files[0];
+    if (!file) return;
+    
+    const scanBtn = document.getElementById('scanBtn');
+    const scanLoading = document.getElementById('scanLoading');
+    const scanResult = document.getElementById('scanResult');
 
-            scanBtn.classList.add('hidden');
-            scanLoading.classList.remove('hidden');
-            scanResult.innerHTML = "";
+    scanBtn.classList.add('hidden');
+    scanLoading.classList.remove('hidden');
+    scanResult.innerHTML = "";
 
-            try {
-                // 压缩图片，腾讯云支持最大10MB，压缩到1MB以内保证速度
-                const b64 = await compressImage(file, 1024, 0.7);
-                const base64Data = b64.split(',')[1]; // 去掉 data:image/jpeg;base64, 前缀
-                
-                // 调用我们的后端API
-                const response = await fetch('/api/tencent-ocr', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ imageBase64: base64Data })
-                });
-                
-                const result = await response.json();
-                
-                scanLoading.classList.add('hidden');
-                
-                if (!result.success) {
-                    showToast(result.error || "识别失败，请重试");
-                    setTimeout(() => window.showModal('scan'), 1000);
-                    return;
-                }
-                
-                const items = result.items || [];
-                
-                if (items.length === 0) {
-                    showToast("未能识别出商品明细，请手动录入");
-                    setTimeout(() => window.showModal('expense'), 1000);
-                    return;
-                }
+    try {
+        const b64 = await compressImage(file, 1024, 0.7);
+        const base64Data = b64.split(',')[1];
+        
+        // 调用后端API
+        const response = await fetch('/api/tencent-ocr', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageBase64: base64Data })
+        });
+        
+        // 检查响应状态
+        if (!response.ok) {
+            throw new Error(`HTTP错误: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        scanLoading.classList.add('hidden');
+        
+        if (!result.success) {
+            showToast(result.error || "识别失败");
+            return;
+        }
+        
+        const items = result.items || [];
+        
+        if (items.length === 0) {
+            showToast("未能识别出商品明细");
+            return;
+        }
+
+        // 渲染识别结果
+        scanResult.innerHTML = `
+            <p class="text-[10px] font-bold text-gray-400 mb-2 uppercase">核对识别结果</p>
+            <div class="max-h-[300px] overflow-y-auto space-y-2 pr-1">
+            ${items.map((i, idx) => `
+                <div class="flex items-center gap-2 bg-gray-50 p-3 rounded-2xl border border-gray-100">
+                    <input type="checkbox" checked class="scan-check w-5 h-5 accent-emerald-500">
+                    <input type="text" value="${i.name}" class="scan-name flex-1 bg-transparent border-none text-sm font-bold outline-none">
+                    <input type="number" step="0.01" value="${i.total}" class="scan-total w-20 text-right bg-transparent border-none text-emerald-600 font-black outline-none">
+                </div>
+            `).join('')}
+            </div>
+            <button onclick="window.saveBatchScan()" class="w-full p-4 bg-emerald-600 text-white rounded-2xl font-black mt-4">
+                确认录入支出
+            </button>
+        `;
+        
+    } catch (err) {
+        console.error("识别异常:", err);
+        showToast("识别失败: " + err.message);
+        scanBtn.classList.remove('hidden');
+        scanLoading.classList.add('hidden');
+    }
+};
 
                 // 渲染识别结果预览列表
                 scanResult.innerHTML = `
@@ -728,4 +756,5 @@
         </div>
     </div>
 </body>
+
 </html>
