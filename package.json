@@ -1,0 +1,7 @@
+{
+  "name": "cake-ledger",
+  "version": "1.1.0",
+  "dependencies": {
+    "tencentcloud-sdk-nodejs-ocr": "^4.0.1"
+  }
+}
