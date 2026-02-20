@@ -1,6 +1,7 @@
-export default function handler(req, res) {
-    res.status(200).json({ 
-        message: 'Hello from API!',
-        method: req.method 
+// 最简单的版本，没有任何依赖
+module.exports = (req, res) => {
+    res.json({ 
+        message: 'API is working!',
+        time: new Date().toISOString()
     });
 }
