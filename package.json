@@ -1,4 +1,8 @@
 {
   "name": "baking-log",
-  "version": "1.0.0"
+  "version": "1.1.0",
+  "type": "module",
+  "dependencies": {
+    "tencentcloud-sdk-nodejs-ocr": "^4.0.15"
+  }
 }
