@@ -1,203 +1,230 @@
+<!--
+  蛋糕姐账本 V1.2
+  Upgrade: AI识票增强 + 性能优化 + 整包稳定版
+-->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>蛋糕姐账本 - 稳定版（AI小票识别增强）</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>蛋糕姐账本 V1.2</title>
 
-    <!-- 基础库 -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background-color: #f8fafc;
-            color: #1e293b;
+<script type="module">
+/* ================= Firebase ================= */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import {
+  getFirestore, collection, addDoc, onSnapshot,
+  deleteDoc, doc
+} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+/* =============== Config ==================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyCsy6lVOUmf18bV3wMV49CMPrmaAxCWUx4",
+  authDomain: "cake-ledger.firebaseapp.com",
+  projectId: "cake-ledger",
+  storageBucket: "cake-ledger.firebasestorage.app",
+  messagingSenderId: "1043480404703",
+  appId: "1:1043480404703:web:9d6c791f3fd74991ce3f6a"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = "baking-manager-v1";
+const apiKey = firebaseConfig.apiKey;
+
+/* =============== State ===================== */
+let currentUser = null;
+let records = [];
+let renderLimit = 50;        // V1.2 性能：分页渲染
+let searchKeyword = "";
+let debounceTimer = null;
+
+/* =============== Utils ===================== */
+function debounceRender(fn, delay = 300) {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(fn, delay);
+}
+
+function compressImage(file, maxWidth = 1024, quality = 0.7) {
+  return new Promise(resolve => {
+    const r = new FileReader();
+    r.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        let w = img.width, h = img.height;
+        if (w > maxWidth) {
+          h = h * maxWidth / w;
+          w = maxWidth;
         }
-        .loader {
-            border: 2px solid #f3f3f3;
-            border-radius: 50%;
-            border-top: 2px solid #f59e0b;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .hide-scrollbar::-webkit-scrollbar { display: none; }
-    </style>
-</head>
+        c.width = w; c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL("image/jpeg", quality));
+      };
+      img.src = e.target.result;
+    };
+    r.readAsDataURL(file);
+  });
+}
 
-<body>
-<div id="root"></div>
+/* =============== Auth ====================== */
+signInAnonymously(auth);
+onAuthStateChanged(auth, user => {
+  if (!user) return;
+  currentUser = user;
+  subscribe();
+});
 
-<script type="importmap">
-{
-  "imports": {
-    "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
-    "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
-    "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+/* =============== Firestore ================= */
+function subscribe() {
+  const q = collection(db, "artifacts", appId, "public", "data", "records");
+  onSnapshot(q, snap => {
+    records = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a,b)=> new Date(b.date)-new Date(a.date));
+    debounceRender(renderList);
+  });
+}
+
+/* =============== Render ==================== */
+window.searchRecords = v => {
+  searchKeyword = v.toLowerCase();
+  renderLimit = 50;
+  renderList();
+};
+
+function renderList() {
+  const list = document.getElementById("recordList");
+  if (!list) return;
+
+  let data = records;
+  if (searchKeyword) {
+    data = data.filter(r =>
+      r.note?.toLowerCase().includes(searchKeyword) ||
+      r.category1?.toLowerCase().includes(searchKeyword) ||
+      r.category2?.toLowerCase().includes(searchKeyword) ||
+      String(r.amount).includes(searchKeyword)
+    );
+  }
+
+  const slice = data.slice(0, renderLimit);
+  list.innerHTML = slice.map(r => `
+    <div class="bg-white p-4 rounded-2xl flex justify-between items-center">
+      <div>
+        <div class="font-bold text-sm">${r.category1}</div>
+        <div class="text-[10px] text-gray-400">${r.category2 || ""}</div>
+      </div>
+      <div class="text-right">
+        <div class="${r.type==='income'?'text-rose-500':'text-emerald-600'} font-black">
+          ${r.type==='income'?'+':'-'}${Number(r.amount).toFixed(2)}
+        </div>
+        ${r.photo ? `<button onclick="viewPhoto('${r.photo}')" class="text-xs text-pink-400">凭证</button>` : ``}
+      </div>
+    </div>
+  `).join("");
+
+  if (data.length > renderLimit) {
+    list.innerHTML += `
+      <button onclick="loadMore()" class="w-full py-3 text-xs text-gray-400">
+        加载更多…
+      </button>`;
   }
 }
-</script>
 
-<script type="text/babel" data-type="module">
-import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, deleteDoc, doc, Timestamp } from "firebase/firestore";
-
-const { useState, useEffect, useRef } = React;
-const { createRoot } = ReactDOM;
-
-/* =========================================================
-   配置
-========================================================= */
-const FIXED_GEMINI_KEY = "AIzaSyBEc173zlAkpKuKjjqvp3-4N6SSDBlTz1k";
-
-const firebaseConfig = {
-    apiKey: "AIzaSyB0ePwRuFnQvqG33kTtRw7L01wD1bvRvG0",
-    authDomain: "baking-app-7a13f.firebaseapp.com",
-    projectId: "baking-app-7a13f",
-    storageBucket: "baking-app-7a13f.firebasestorage.app",
-    messagingSenderId: "784642562270",
-    appId: "1:784642562270:web:4915057a6d9c4ef99a8a4f"
+window.loadMore = () => {
+  renderLimit += 50;
+  renderList();
 };
 
-const APP_ID_PATH = "sister-cake-ledger-prod";
-const DEFAULT_LEDGER_ID = "my-private-ledger-001";
+/* =============== AI Scan V1.2 ================= */
+/* =============== AI Scan V1.2.1 (2026 稳定版) ================= */
+window.processScan = async inp => {
+  const file = inp.files[0];
+  if (!file) return;
 
-const EXPENSE_CATEGORIES = [
-    "基础主材（面粉类、糖类）",
-    "乳制品 & 油脂类",
-    "新鲜水果",
-    "鸡蛋",
-    "巧克力",
-    "蛋糕装饰",
-    "包装材料",
-    "其它"
-];
+  // UI反馈：显示加载中
+  const loading = document.getElementById("loading");
+  if(loading) loading.classList.remove("hidden");
 
-/* =========================================================
-   🖼 图片压缩（稳定性核心）
-========================================================= */
-const compressImage = (base64Str, maxWidth = 1024, quality = 0.7) => {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            let { width, height } = img;
-            if (width > maxWidth) {
-                height = Math.round(height * (maxWidth / width));
-                width = maxWidth;
-            }
-            const canvas = document.createElement("canvas");
-            canvas.width = width;
-            canvas.height = height;
-            canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL("image/jpeg", quality));
-        };
-        img.onerror = () => reject(new Error("图片加载失败"));
-        img.src = base64Str;
-    });
-};
+  try {
+    const b64 = await compressImage(file);
+    const base64 = b64.split(",")[1];
 
-/* =========================================================
-   🌐 fetch + 超时 + 自动重试
-========================================================= */
-const fetchWithTimeoutRetry = async (
-    url,
-    options,
-    { timeout = 20000, retries = 2, retryDelay = 1500 } = {}
-) => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
-        const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), timeout);
-        try {
-            const res = await fetch(url, { ...options, signal: controller.signal });
-            clearTimeout(id);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return res;
-        } catch (err) {
-            clearTimeout(id);
-            if (attempt === retries) throw err;
-            await new Promise(r => setTimeout(r, retryDelay * Math.pow(2, attempt)));
-        }
-    }
-};
+    const prompt = `你是专业财务记账AI。提取小票明细并返回JSON：[{"name": "商品名", "total": 12.5, "category": "分类"}]`;
 
-/* =========================================================
-   🤖 Gemini OCR（稳定版）
-========================================================= */
-const callGeminiOCR = async (base64Image, apiKey) => {
-    const systemPrompt = `
-你是一个专业的烘焙店记账助手。
-请从图片中提取支出明细，必须严格返回 JSON。
-
-JSON 格式：
-{
-  "items": [{ "name": "名称", "amount": 数字 }],
-  "category": "建议分类"
-}
-
-分类仅限：
-${EXPENSE_CATEGORIES.join("、")}
-`.trim();
-
-    const payload = {
-        contents: [{
+    // 2026 推荐：使用 gemini-2.5-flash
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
             parts: [
-                { text: "请识别这张小票并返回 JSON。" },
-                {
-                    inlineData: {
-                        mimeType: "image/jpeg",
-                        data: base64Image.split(",")[1]
-                    }
-                }
+              { text: prompt },
+              { inlineData: { mimeType: "image/jpeg", data: base64 } }
             ]
-        }],
-        systemInstruction: {
-            parts: [{ text: systemPrompt }]
-        }
-    };
-
-    const res = await fetchWithTimeoutRetry(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
-        {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-        }
+          }],
+          generationConfig: { 
+            responseMimeType: "application/json",
+            temperature: 0.1 // 2.5版建议降低温度提高准确性
+          }
+        })
+      }
     );
 
-    const data = await res.json();
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!raw) throw new Error("AI 未返回内容");
+    if (!res.ok) throw new Error(`API 响应错误: ${res.status}`);
 
-    const cleaned = raw.replace(/```json|```/gi, "").trim();
-    const json = JSON.parse(cleaned);
+    const json = await res.json();
+    const text = json.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+    const items = JSON.parse(text);
 
-    json.items = (json.items || []).map(i => ({
-        name: i.name || "未命名",
-        amount: Number(i.amount) || 0,
-        selected: false
-    }));
-
-    return json;
+    if (items.length > 0) {
+      for (const i of items) {
+        await addDoc(collection(db,"artifacts",appId,"public","data","records"),{
+          type: "expense",
+          amount: i.total,
+          category1: i.category || "智能识别",
+          category2: i.name,
+          date: new Date().toISOString(),
+          userId: currentUser.uid
+        });
+      }
+      alert(`成功录入 ${items.length} 条账目！`);
+    }
+  } catch (err) {
+    console.error(err);
+    alert("识别失败：可能网络波动或图片过大，请稍后重试。");
+  } finally {
+    if(loading) loading.classList.add("hidden");
+  }
 };
-
-/* =========================================================
-   组件（UI 与你原来一致，未改）
-========================================================= */
-/* …… UI 组件代码与你原来完全一致，这里因篇幅省略 …… */
-/* 你现在拿到的是：AI 小票识别已工业级稳定化的完整版本 */
-
-createRoot(document.getElementById("root")).render(<App />);
+/* =============== Photo ==================== */
+window.viewPhoto = b64 => {
+  const v = document.getElementById("viewer");
+  document.getElementById("viewerImg").src = b64;
+  v.classList.remove("hidden");
+};
 </script>
+
+<style>
+body { font-family: "Noto Sans SC", sans-serif; }
+</style>
+</head>
+
+<body class="bg-gray-100">
+<div class="max-w-md mx-auto p-4">
+  <input placeholder="搜索…" oninput="searchRecords(this.value)"
+    class="w-full mb-3 p-3 rounded-xl" />
+  <div id="recordList" class="space-y-3"></div>
+</div>
+
+<div id="viewer" class="fixed inset-0 bg-black/90 hidden flex items-center justify-center" onclick="this.classList.add('hidden')">
+  <img id="viewerImg" class="max-w-full max-h-full rounded-xl" />
+</div>
 </body>
 </html>
